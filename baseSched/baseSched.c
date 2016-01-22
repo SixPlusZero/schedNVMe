@@ -17,7 +17,7 @@
 #include "spdk/string.h"
 #include "../lib/nvme/nvme_impl.h"
 #include "../lib/nvme/nvme_internal.h"
-
+#define MAX_IO_BLOCKS 100
 typedef unsigned long int   uint64_t;
 
 struct ctrlr_entry {
@@ -351,9 +351,9 @@ task_complete(struct perf_task *task)
 	ns_ctx = task->ns_ctx;
 	ns_ctx->current_queue_depth--;
 	ns_ctx->io_completed++;
-	printf("Complete one command\n");
+	//printf("Complete one command\n");
 
-	rte_mempool_put(task_pool, task);
+	//rte_mempool_put(task_pool, task);
 }
 
 static void
@@ -402,33 +402,40 @@ work_fn(void *arg){
 		fprintf(stderr, "nvme_register_io_thread() failed on core %u\n", worker->lcore);
 		return -1;
 	}
+	printf("We should see this message\n");
 
+	uint64_t tsc_start = rte_get_timer_cycles();
 
-	for (int i = 0; i < 10000; i++){
-		if (rte_mempool_get(task_pool, (void **)&task) != 0) {
-			fprintf(stderr, "task_pool rte_mempool_get failed\n");
-			exit(1);
-		}
-		task->ns_ctx = ns_ctx;
-		
+	if (rte_mempool_get(task_pool, (void **)&task) != 0) {
+		fprintf(stderr, "task_pool rte_mempool_get failed\n");
+		exit(1);
+	}
+	task->ns_ctx = ns_ctx;
+
+	for (int i = 0; i < 100000; i++){
+		/*
 		while (ns_ctx->current_queue_depth > 0){
-			nvme_ctrlr_process_io_completions(ns_ctx->entry->u.nvme.ctrlr, 1);
+			nvme_ctrlr_process_io_completions(ns_ctx->entry->u.nvme.ctrlr, 0);
 		}
+		*/
+		
 		if ((i & 2) == 0){
-			rc = submit_read(ns_ctx, task, i, 1);
-			printf("Submit one read command %d\n", i);			
+			rc = submit_read(ns_ctx, task, i, MAX_IO_BLOCKS);
+			//printf("Submit one read command %d\n", i);			
 		} else{
-			rc = submit_write(ns_ctx, task, i, 1);
-			printf("Submit one write command %d\n", i);			
+			rc = submit_write(ns_ctx, task, i, MAX_IO_BLOCKS);
+			//printf("Submit one write command %d\n", i);			
 
 		}
 	}
 
-
-		while (ns_ctx->current_queue_depth > 0){
-			nvme_ctrlr_process_io_completions(ns_ctx->entry->u.nvme.ctrlr, 1);
-		}
-
+	//sleep(1);
+	while (ns_ctx->current_queue_depth > 0){
+		nvme_ctrlr_process_io_completions(ns_ctx->entry->u.nvme.ctrlr, 1);
+	}
+	uint64_t tsc_end = rte_get_timer_cycles();
+	double cycles = (tsc_end - tsc_start) * 1000 / (double)g_tsc_rate;
+	printf("Time %lf msecond\n", cycles);
 	nvme_unregister_io_thread();
 	return 0;
 }
@@ -470,7 +477,7 @@ int main(int argc, char **argv)
 		fprintf(stderr, "could not initialize request mempool\n");
 		return 1;
 	}
-
+	g_io_size_bytes = 512*MAX_IO_BLOCKS;
 	task_pool = rte_mempool_create("task_pool", 8192,
 				       sizeof(struct perf_task),
 				       64, 0, NULL, NULL, task_ctor, NULL,
