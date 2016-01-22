@@ -122,3 +122,7 @@ extern int associate_workers_with_ns(void);
 extern int initSPDK(void);
 extern int initTrace(void);
 extern int replay_split(struct iotask *dst, char* str);
+extern void task_complete(struct perf_task *task);
+extern void io_complete(void *ctx, const struct nvme_completion *completion);
+extern int submit_read(struct ns_worker_ctx *ns_ctx, struct perf_task *task, uint64_t lba, uint64_t num_blocks);
+extern int submit_write(struct ns_worker_ctx *ns_ctx, struct perf_task *task, uint64_t lba, uint64_t num_blocks);

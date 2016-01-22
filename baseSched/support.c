@@ -325,4 +325,37 @@ int initTrace(void){
 	return 0;
 }
 
+void task_complete(struct perf_task *task){
+	struct ns_worker_ctx	*ns_ctx;
+
+	ns_ctx = task->ns_ctx;
+	ns_ctx->current_queue_depth--;
+	ns_ctx->io_completed++;
+}
+
+void io_complete(void *ctx, const struct nvme_completion *completion){
+	task_complete((struct perf_task *)ctx);
+}
+
+int submit_read(struct ns_worker_ctx *ns_ctx, struct perf_task *task, uint64_t lba, uint64_t num_blocks){
+	struct ns_entry	*entry = ns_ctx->entry;
+	int rc;
+
+	rc = nvme_ns_cmd_read(entry->u.nvme.ns, task->buf, lba,
+		num_blocks, io_complete, task);
+	ns_ctx->current_queue_depth++;
+
+	return rc;
+}
+
+int submit_write(struct ns_worker_ctx *ns_ctx, struct perf_task *task, uint64_t lba, uint64_t num_blocks){
+	struct ns_entry	*entry = ns_ctx->entry;
+	int rc;
+
+	rc = nvme_ns_cmd_write(entry->u.nvme.ns, task->buf, lba,
+		num_blocks, io_complete, task);
+	ns_ctx->current_queue_depth++;
+
+	return rc;
+}
 
