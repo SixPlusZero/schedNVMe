@@ -4,7 +4,7 @@ include $(SPDK_ROOT_DIR)/mk/spdk.common.mk
 
 APP = baseSched
 
-C_SRCS := baseSched.c
+C_SRCS := baseSched.c support.c
 
 CFLAGS += -I. $(DPDK_INC)
 
