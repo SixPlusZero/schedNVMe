@@ -18,6 +18,7 @@
 #include "../lib/nvme/nvme_impl.h"
 #include "../lib/nvme/nvme_internal.h"
 #define MAX_IO_BLOCKS 100
+#define IO_TIME 100000
 typedef unsigned long int   uint64_t;
 
 struct ctrlr_entry {
@@ -148,37 +149,6 @@ static void task_ctor(struct rte_mempool *mp, void *arg, void *__task, unsigned 
 		fprintf(stderr, "task->buf rte_malloc failed\n");
 		exit(1);
 	}
-}
-
-static void
-print_stats(void)
-{
-	float io_per_second, mb_per_second;
-	float total_io_per_second, total_mb_per_second;
-	struct worker_thread	*worker;
-	struct ns_worker_ctx	*ns_ctx;
-
-	total_io_per_second = 0;
-	total_mb_per_second = 0;
-
-	worker = g_workers;
-	while (worker) {
-		ns_ctx = worker->ns_ctx;
-		while (ns_ctx) {
-			io_per_second = (float)ns_ctx->io_completed / g_time_in_sec;
-			mb_per_second = io_per_second * g_io_size_bytes / (1024 * 1024);
-			printf("%-43.43s from core %u: %10.2f IO/s %10.2f MB/s\n",
-			       ns_ctx->entry->name, worker->lcore,
-			       io_per_second, mb_per_second);
-			total_io_per_second += io_per_second;
-			total_mb_per_second += mb_per_second;
-			ns_ctx = ns_ctx->next;
-		}
-		worker = worker->next;
-	}
-	printf("========================================================\n");
-	printf("%-55s: %10.2f IO/s %10.2f MB/s\n",
-	       "Total", total_io_per_second, total_mb_per_second);
 }
 
 static int
@@ -351,7 +321,6 @@ task_complete(struct perf_task *task)
 	ns_ctx = task->ns_ctx;
 	ns_ctx->current_queue_depth--;
 	ns_ctx->io_completed++;
-	//printf("Complete one command\n");
 
 	//rte_mempool_put(task_pool, task);
 }
@@ -412,28 +381,30 @@ work_fn(void *arg){
 	}
 	task->ns_ctx = ns_ctx;
 
-	for (int i = 0; i < 5000; i++){
-		/*
-		while (ns_ctx->current_queue_depth > 0){
-			nvme_ctrlr_process_io_completions(ns_ctx->entry->u.nvme.ctrlr, 0);
+	for (int i = 1; i <= 100000; i++){
+
+		if (ns_ctx->current_queue_depth > 0){
+			nvme_ctrlr_process_io_completions(ns_ctx->entry->u.nvme.ctrlr, 0);			
+			while (ns_ctx->current_queue_depth > 0){
+				nvme_ctrlr_process_io_completions(ns_ctx->entry->u.nvme.ctrlr, 0);		
+			}
 		}
-		*/
+		
 		
 		if ((i & 2) == 0){
-			rc = submit_read(ns_ctx, task, i, MAX_IO_BLOCKS);
-			//printf("Submit one read command %d\n", i);			
+			rc = submit_write(ns_ctx, task, i, MAX_IO_BLOCKS);
 		} else{
 			rc = submit_write(ns_ctx, task, i, MAX_IO_BLOCKS);
-			//printf("Submit one write command %d\n", i);			
 		}
-		if ((i % 1000) == 0) printf("Reach %d\n", i);
+		if (rc != 0){
+			printf("Error at submit command %d\n", i);
+			exit(1);
+		}
+		if ((i % 50000) == 0) printf("Reach %d %d\n", i, ns_ctx->current_queue_depth);
 	}
 
-	//sleep(1);
 	while (ns_ctx->current_queue_depth > 0){
 		nvme_ctrlr_process_io_completions(ns_ctx->entry->u.nvme.ctrlr, 0);
-		sleep(1);
-		printf("Remaining %d\n", ns_ctx->current_queue_depth);
 	}
 	uint64_t tsc_end = rte_get_timer_cycles();
 	double cycles = (tsc_end - tsc_start) * 1000 / (double)g_tsc_rate;
