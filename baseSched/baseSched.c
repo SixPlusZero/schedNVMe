@@ -22,14 +22,10 @@ uint64_t f_totalblocks = 0;
 uint64_t iotask_read_count = 0;
 uint64_t iotask_write_count = 0;
 
-
 struct perf_task *task;
 struct iotask *iotasks;
 
 /* Function Definitions */
-
-
-
 
 static int
 work_fn(void *arg){
@@ -109,6 +105,5 @@ int main(void){
 	rc = work_fn(g_workers);
 	free(iotasks);
 	unregister_controllers();
-
 
 }
