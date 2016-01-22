@@ -412,7 +412,7 @@ work_fn(void *arg){
 	}
 	task->ns_ctx = ns_ctx;
 
-	for (int i = 0; i < 100000; i++){
+	for (int i = 0; i < 5000; i++){
 		/*
 		while (ns_ctx->current_queue_depth > 0){
 			nvme_ctrlr_process_io_completions(ns_ctx->entry->u.nvme.ctrlr, 0);
@@ -425,13 +425,15 @@ work_fn(void *arg){
 		} else{
 			rc = submit_write(ns_ctx, task, i, MAX_IO_BLOCKS);
 			//printf("Submit one write command %d\n", i);			
-
 		}
+		if ((i % 1000) == 0) printf("Reach %d\n", i);
 	}
 
 	//sleep(1);
 	while (ns_ctx->current_queue_depth > 0){
-		nvme_ctrlr_process_io_completions(ns_ctx->entry->u.nvme.ctrlr, 1);
+		nvme_ctrlr_process_io_completions(ns_ctx->entry->u.nvme.ctrlr, 0);
+		sleep(1);
+		printf("Remaining %d\n", ns_ctx->current_queue_depth);
 	}
 	uint64_t tsc_end = rte_get_timer_cycles();
 	double cycles = (tsc_end - tsc_start) * 1000 / (double)g_tsc_rate;
