@@ -96,6 +96,12 @@ int register_workers(void)
 
 		memset(worker, 0, sizeof(struct worker_thread));
 		worker->lcore = lcore;
+		//Init some thread-private variables
+		nvme_mutex_init(&lock[lcore]);
+		cmd_buffer[lcore].head = 0;
+		cmd_buffer[lcore].tail = 0;
+		cmd_buffer[lcore].cnt = 0;
+
 		prev_worker->next = worker;
 		g_num_workers++;
 	}
@@ -210,17 +216,14 @@ int associate_workers_with_ns(void)
 
 int initSPDK(void){
 	int rc;
-	//struct worker_thread *worker;
-	//Here we only use one core (aka. one I/O queue) for our baseline
+	//Here we use one plus (n-1) core 
+	//(aka. one master thread plus (n-1) I/O queue) for our algorithm
 
 	g_io_size_bytes = 512;
-	g_time_in_sec = 0;
-	g_core_mask = NULL;
-	g_max_completions = 0;
 	optind = 1;
-	g_core_mask = "0x1";
-	ealargs[1] = sprintf_alloc("-c %s", g_core_mask ? g_core_mask : "0x1");
+	g_core_mask = "0xffff";
 
+	ealargs[1] = sprintf_alloc("-c %s", g_core_mask);
 	if (ealargs[1] == NULL) {
 		perror("ealargs sprintf_alloc");
 		return 1;
@@ -254,6 +257,12 @@ int initSPDK(void){
 	if (associate_workers_with_ns() != 0) {
 		return 1;
 	}
+	//Decrease the g_num_workers to get the real slaves num 
+	g_num_workers -= 1;
+	
+	//Init the master lock;
+	nvme_mutex_init(&lock_master);
+
 	printf("Initialization complete. Launching workers.\n");
 	return 0;
 }

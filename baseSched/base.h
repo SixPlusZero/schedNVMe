@@ -28,7 +28,8 @@
 typedef unsigned long int   uint64_t;
 #define MAX_IO_BLOCKS 100
 #define IO_TIME 100000
-
+#define MAX_NUM_WORKER 16
+#define MAX_CMD_NUM 10000
 
 struct ctrlr_entry {
 	struct nvme_controller	*ctrlr;
@@ -72,10 +73,17 @@ struct perf_task {
 	void			*buf;
 };
 
+struct cmd_tasks{
+	uint64_t queue[MAX_CMD_NUM];
+	uint64_t head;
+	uint64_t tail;
+	uint64_t cnt;
+};
+
 struct worker_thread {
 	struct ns_worker_ctx 	*ns_ctx;
 	struct worker_thread	*next;
-	unsigned		lcore;
+	unsigned lcore;
 };
 
 struct iotask {
@@ -87,7 +95,6 @@ struct iotask {
 
 /* Variable Declaration */
 extern struct rte_mempool *request_mempool;
-//extern struct rte_mempool *task_pool;
 extern struct ctrlr_entry *g_controllers;
 extern struct ns_entry *g_namespaces;
 extern int g_num_namespaces;
@@ -107,7 +114,10 @@ extern uint64_t iotask_read_count;
 extern uint64_t iotask_write_count;
 extern char *ealargs[];
 extern struct iotask *iotasks;
-
+extern struct perf_task *tasks[MAX_NUM_WORKER];
+extern nvme_mutex_t lock[MAX_NUM_WORKER];
+extern nvme_mutex_t lock_master;
+extern struct cmd_tasks cmd_buffer[MAX_NUM_WORKER];
 
 /* Function Declaration */
 extern int initSPDK(void);
