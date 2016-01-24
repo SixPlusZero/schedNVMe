@@ -78,31 +78,9 @@ static int work_fn(void *arg){
 	printf("[Debug] %u inited, with global %u/%u\n",
 			worker->lcore, init_count, g_num_workers);
 
-	while ((!io_issue_flag) || (cmd_buffer[worker->lcore].cnt)){
-		uint64_t cmd_id = fetch_cmd(worker->lcore);
-		if (ns_ctx->current_queue_depth > 0){
+	while ((!io_issue_flag) || (master_pending.cnt)){
+		while (ns_ctx->current_queue_depth > 0)
 			nvme_ctrlr_process_io_completions(ns_ctx->entry->u.nvme.ctrlr, 0);
-			while (ns_ctx->current_queue_depth > 0){
-				nvme_ctrlr_process_io_completions(ns_ctx->entry->u.nvme.ctrlr, 0);
-			}
-		}
-		uint64_t addr = iotasks[cmd_id].asu * f_maxlba + iotasks[cmd_id].lba;
-		if (iotasks[cmd_id].type == 0){
-			rc = submit_read(ns_ctx, task, addr, iotasks[cmd_id].size);		
-			if (rc != 0){
-				printf("Error at submiting command %lu\n", cmd_id);
-				exit(1);
-			}
-		}	else{
-			rc = submit_write(ns_ctx, task, addr, iotasks[cmd_id].size);		
-			if (rc != 0){
-				printf("Error at submiting command %lu\n", cmd_id);
-				exit(1);
-			}
-		}
-	}
-	while (ns_ctx->current_queue_depth > 0){
-		nvme_ctrlr_process_io_completions(ns_ctx->entry->u.nvme.ctrlr, 0);
 	}
 	
 	// Report slave finished.
@@ -119,24 +97,114 @@ static int work_fn(void *arg){
 	return 0;
 }
 
-static unsigned scheduler(uint64_t cmd){
-	return ((cmd % g_num_workers) + 1);
+static unsigned check_cover(uint64_t cmd_a, uint64_t cmd_b){
+	struct iotask *c1 = &iotasks[cmd_a];
+	struct iotask *c2 = &iotasks[cmd_b];
+	
+	uint64_t lba1 = c1->asu * f_maxlba + c1->lba;
+	uint64_t lba2 = c2->asu * f_maxlba + c2->lba;
+
+	if ((lba1 + c1->size - 1) < lba2) return 0;
+	if ((lba2 + c2->size - 1) < lba1) return 0;
+	
+	if ((!c1->type) && (!c2->type)) return 0;
+	
+	return 1;	
 }
 
-static void update_cmd_queue(unsigned t, unsigned cmd){
-	unsigned flag = 0;
-	while (flag == 0){
-		nvme_mutex_lock(&lock[t]);
-		if (cmd_buffer[t].cnt != MAX_CMD_NUM){
-			cmd_buffer[t].tail = cmd;
-			cmd_buffer[t].tail += 1;
-			if (cmd_buffer[t].tail == MAX_CMD_NUM)
-				cmd_buffer[t].tail = 0;
-			cmd_buffer[t].cnt += 1;
-			flag = 1;
-		}
-		nvme_mutex_unlock(&lock[t]);
+static unsigned check_conflict(uint64_t cmd_id){
+	unsigned conflict_flag = 0;
+	unsigned pos = master_pending->head;
+	for (unsigned i = 0; i < master_pending->cnt; i++){
+		if (check_cover(master_pending[pos], cmd))
+			return 1;		
 	}
+	for (int i = 1; i <= g_num_workers; i++){
+		nvme_mutex_lock(&lock[i]);
+		for (int j = 0; j < ISSUE_BUF_SIZE; j++){
+			if (issue_buf[i].issue_queue[j].io_completed) continue;
+			if (check_cover(issue_buf[i].issue_queue[j].cmd_id, cmd)
+				conflict_flag = 1;	
+		}
+		nvme_mutex_unlock(&lock[i]);
+		if (conflict_flag) return 1;
+	}
+	return 0;
+}
+
+static int select_worker(void){	
+	int flag = 0;
+	g_robin += 1;
+	if (g_robin > g_num_workers) 
+		g_robin = 1;
+	
+	while (true){
+		nvme_mutex_lock(&lock[g_robin]);
+		if (issue_buf[g_robin].ctx->current_queue_depth != ISSUE_BUF_SIZE)
+			flag = 1;
+		nvme_mutex_unlock(&lock[g_robin]);
+		if (flag) return g_robin;
+		g_robin += 1;
+		if (g_robin > g_num_workers)
+			g_robin = 1;
+	}
+}
+
+static int scheduler(uint64_t cmd_id){
+	if (check_conflict(cmd_id)){
+		if (master_pending.cnt == PENDING_QUEUE_SIZE)
+			return -1;
+		master_pending.pending_queue[master_pending.cnt] = cmd_id;
+		master_pending.cnt += 1;
+		master_pending.tail += 1;
+		if (master_pending.tail == PENDING_QUEUE_SIZE) 
+			master_pending.tail = 0;
+		return 0;
+	}
+	return select_worker();
+}
+
+static void master_issue(uint64_t cmd_id, int target){
+	nvme_mutex_lock(&lock[target]);
+	for (unsigned i = 0; i < ISSUE_BUF_SIZE; i++){
+		if (issue_buf[target].issue_queue[i].io_completed == 1){
+			issue_buf[target].issue_queue[i].io_completed = 0;
+			issue_buf[target].issue_queue[i].cmd_id = cmd_id;
+			break;
+		}
+	}
+	nvme_mutex_unlock(&lock[target]);
+
+	uint64_t addr = iotasks[cmd_id].asu * f_maxlba + iotasks[cmd_id].lba;
+	if (iotasks[cmd_id].type == 0){
+		rc = submit_read(target, task, addr, iotasks[cmd_id].size);		
+		if (rc != 0){
+			printf("Error at submiting command %lu\n", cmd_id);
+			exit(1);
+		}
+	}	else{
+		rc = submit_write(target, task, addr, iotasks[cmd_id].size);		
+		if (rc != 0){
+			printf("Error at submiting command %lu\n", cmd_id);
+			exit(1);
+		}
+	}
+}
+
+static void clear_pending(void){
+	if (master_pending.cnt == 0) return;
+	while (true){
+		uint64_t cmd_id = master_pending.pending_queue[master_pending.head].cmd_id;
+		if (check_issue_conflict(cmd_id)) return;	
+		int rc = select_worker();
+		master_issue(cmd_id, rc);
+		master_pending.cnt -= 1;
+		master_pending.head += 1;
+		if (master_pending.head == PENDING_QUEUE_SIZE)
+			master_pending.head = 0;
+		if (master_pending.cnt == 0)
+			return;
+	}	
 }
 
 static void master_fn(void){
@@ -145,17 +213,36 @@ static void master_fn(void){
 
 	//Wait until all slave workers finish their init.
 	while (init_count != g_num_workers);
+	
+	//Begin timing.
 	uint64_t tsc_start = rte_get_timer_cycles();
-	for (uint64_t i = 0; i < f_len; i++){
-		unsigned target = scheduler(i);
-		update_cmd_queue(target, i);
-		if (((i+1) % 100000) == 0)
-			printf("Master has allocated %lu commands\n", i+1);
+	
+	uint64_t pos = 0;
+	while (pos < f_len){
+		clear_pending();
+		int target = scheduler(pos);
+		if (target > 0){
+			master_issue(pos, target);
+		}
+		if (target != -1){
+			pos += 1;	
+			if ((pos % 100000) == 0)
+				printf("Master has (allocated && issued) %lu commands\n", pos);
+		}
 	}
+	
+	//Tag that master has allocated all the commands.
 	io_issue_flag = 1;
+	
 	while (io_count != g_num_workers);
+	
+	//Stop timing.
 	uint64_t tsc_end = rte_get_timer_cycles();
+	
+	//Get the total time.
 	double sec = (tsc_end - tsc_start) / (double)g_tsc_rate;
+	
+	//Output the result infomation.
 	printf("Time: %lf seconds\n", sec);
 	printf("Throughput: %lf MB/S\n", (double)f_totalblocks/2048/sec);
 }

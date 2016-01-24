@@ -30,6 +30,10 @@ typedef unsigned long int   uint64_t;
 #define IO_TIME 100000
 #define MAX_NUM_WORKER 16
 #define MAX_CMD_NUM 10000
+#define ISSUE_BUF_SIZE 10
+#define PENDING_QUEUE_SIZE 1000
+
+
 
 struct ctrlr_entry {
 	struct nvme_controller	*ctrlr;
@@ -62,22 +66,12 @@ struct ns_worker_ctx {
 	struct ns_entry		*entry;
 	uint64_t		io_completed;
 	uint64_t		current_queue_depth;
-	uint64_t		offset_in_ios;
-	bool			is_draining;
-
-	struct ns_worker_ctx	*next;
+	struct ns_worker_ctx *next;
 };
 
 struct perf_task {
 	struct ns_worker_ctx	*ns_ctx;
 	void			*buf;
-};
-
-struct cmd_tasks{
-	uint64_t queue[MAX_CMD_NUM];
-	uint64_t head;
-	uint64_t tail;
-	uint64_t cnt;
 };
 
 struct worker_thread {
@@ -86,12 +80,34 @@ struct worker_thread {
 	unsigned lcore;
 };
 
+struct issue_task{
+	uint64_t cmd_id;
+	uint64_t io_completed; // Whether it's completed.
+};
+
+struct issue_struct{
+	struct issue_task issue_queue[ISSUE_BUF_SIZE];
+	struct ns_worker_ctx *ctx;
+};
+
 struct iotask {
 	uint32_t lba;
 	uint32_t size;
 	uint32_t asu;
 	uint32_t type;
 };
+
+struct pending_task{
+	uint64_t cmd_id;
+};
+
+struct pending_tasks{
+	struct pending_task pending_queue[PENDING_QUEUE_NUM];
+	unsigned head;
+	unsigned tail;
+	unsigned cnt;
+};
+
 
 /* Variable Declaration */
 extern struct rte_mempool *request_mempool;
@@ -117,7 +133,9 @@ extern struct iotask *iotasks;
 extern struct perf_task *tasks[MAX_NUM_WORKER];
 extern nvme_mutex_t lock[MAX_NUM_WORKER];
 extern nvme_mutex_t lock_master;
-extern struct cmd_tasks cmd_buffer[MAX_NUM_WORKER];
+extern struct pending_tasks master_pending;
+extern struct issue_struct issue_buf[MAX_NUM_WORKER];
+extern unsigned g_robin;
 
 /* Function Declaration */
 extern int initSPDK(void);
@@ -134,5 +152,5 @@ extern int initTrace(void);
 extern int replay_split(struct iotask *dst, char* str);
 extern void task_complete(struct perf_task *task);
 extern void io_complete(void *ctx, const struct nvme_completion *completion);
-extern int submit_read(struct ns_worker_ctx *ns_ctx, struct perf_task *task, uint64_t lba, uint64_t num_blocks);
-extern int submit_write(struct ns_worker_ctx *ns_ctx, struct perf_task *task, uint64_t lba, uint64_t num_blocks);
+extern int submit_read(int target, struct perf_task *task, uint64_t lba, uint64_t num_blocks);
+extern int submit_write(int target, struct perf_task *task, uint64_t lba, uint64_t num_blocks);

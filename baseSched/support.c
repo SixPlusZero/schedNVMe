@@ -98,10 +98,6 @@ int register_workers(void)
 		worker->lcore = lcore;
 		//Init some thread-private variables
 		nvme_mutex_init(&lock[lcore]);
-		cmd_buffer[lcore].head = 0;
-		cmd_buffer[lcore].tail = 0;
-		cmd_buffer[lcore].cnt = 0;
-
 		prev_worker->next = worker;
 		g_num_workers++;
 	}
@@ -197,6 +193,7 @@ int associate_workers_with_ns(void)
 		ns_ctx->entry = entry;
 		ns_ctx->next = worker->ns_ctx;
 		worker->ns_ctx = ns_ctx;
+		issue_buf[worker->lcore].ctx = ns_ctx;
 
 		worker = worker->next;
 		if (worker == NULL) {
@@ -346,25 +343,26 @@ void io_complete(void *ctx, const struct nvme_completion *completion){
 	task_complete((struct perf_task *)ctx);
 }
 
-int submit_read(struct ns_worker_ctx *ns_ctx, struct perf_task *task, uint64_t lba, uint64_t num_blocks){
-	struct ns_entry	*entry = ns_ctx->entry;
+int submit_read(int target, struct perf_task *task, uint64_t lba, uint64_t num_blocks){
+	struct ns_entry *entry = issue_buf[target].ctx->entry;
 	int rc;
-
+	nvme_mutex_lock(&lock[target]);
 	rc = nvme_ns_cmd_read(entry->u.nvme.ns, task->buf, lba,
 		num_blocks, io_complete, task);
-	ns_ctx->current_queue_depth++;
 
+	ns_ctx->current_queue_depth++;
+	nvme_mutex_unlock(&lock[target]);
 	return rc;
 }
 
-int submit_write(struct ns_worker_ctx *ns_ctx, struct perf_task *task, uint64_t lba, uint64_t num_blocks){
-	struct ns_entry	*entry = ns_ctx->entry;
+int submit_write(int target, struct perf_task *task, uint64_t lba, uint64_t num_blocks){
+	struct ns_entry	*entry = issue_buf[target].ctx->entry;
 	int rc;
-
+	nvme_mutex_lock(&lock[target]);
 	rc = nvme_ns_cmd_write(entry->u.nvme.ns, task->buf, lba,
 		num_blocks, io_complete, task);
 	ns_ctx->current_queue_depth++;
-
+	nvme_mutex_unlock(&lock[target]);
 	return rc;
 }
 
