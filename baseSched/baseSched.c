@@ -43,8 +43,10 @@ uint64_t pending_count;
 
 // Fetch one command from its cmd_buf
 // to its issue_buf
-static uint64_t fetch_cmd(struct ns_worker_ctx *ns_ctx, unsigned target){
+static struct submit_struct fetch_cmd(struct ns_worker_ctx *ns_ctx, unsigned target){
+	struct submit_struct result;
 	uint64_t cmd_id;
+
 
 	nvme_mutex_lock(&lock[target]);
 	
@@ -53,21 +55,23 @@ static uint64_t fetch_cmd(struct ns_worker_ctx *ns_ctx, unsigned target){
 	cmd_buf[target].head += 1;
 	if (cmd_buf[target].head == CMD_BUF_SIZE) cmd_buf[target].head = 0;
 	cmd_buf[target].cnt -= 1;
-	
+	//printf("%lu\n", cmd_id);	
 	// worker->issue_buf
 	for (unsigned i = 0; i < ISSUE_BUF_SIZE; i++){
 		if (issue_buf[target].issue_queue[i].io_completed == 1){
 			issue_buf[target].issue_queue[i].io_completed = 0;
 			issue_buf[target].issue_queue[i].cmd_id = cmd_id;
+			result.cmd_id = cmd_id;
+			result.ptr = (void *) &(issue_buf[target].issue_queue[i]);
+			//printf("Show %lu, %lu\n", result.cmd_id, ((struct issue_task *)(result.ptr))->cmd_id);
 			break;
 		}
 	}
-
+	nvme_mutex_unlock(&lock[target]);
 	// Increase the sq depth here to ensure the consistency.
 	ns_ctx->current_queue_depth += 1;
 
-	nvme_mutex_unlock(&lock[target]);
-	return cmd_id;
+	return result;
 }
 
 // Worker's main
@@ -88,7 +92,10 @@ static int work_fn(void *arg){
 	task = rte_malloc(NULL, sizeof(struct perf_task), 0x200);
 	task->buf = rte_malloc(NULL, f_maxsize*512*2, 0x200);	
 	task->ns_ctx = ns_ctx;
-	
+	for (unsigned i = 0; i < ISSUE_BUF_SIZE; i++){
+		issue_buf[worker->lcore].issue_queue[i].ns_ctx = ns_ctx;
+		issue_buf[worker->lcore].issue_queue[i].io_completed = 1;
+	}
 	// Report slave's work begin.
 	nvme_mutex_lock(&lock_master);
 	init_count += 1;
@@ -105,18 +112,21 @@ static int work_fn(void *arg){
 		
 		// cnt > 0 means we still have cmds to do.
 		if (cmd_buf[worker->lcore].cnt){
-			
+			while (ns_ctx->current_queue_depth == ISSUE_BUF_SIZE);
 			// Fetch cmd_id
-			uint64_t cmd_id = fetch_cmd(ns_ctx, worker->lcore);
+			struct submit_struct r = fetch_cmd(ns_ctx, worker->lcore);
+			uint64_t cmd_id = r.cmd_id;
 
 			// Issue the cmd
 			uint64_t addr = iotasks[cmd_id].asu * f_maxlba + iotasks[cmd_id].lba;
 			// Distinguish the r/w
-			if (iotasks[cmd_id].type == 0){
-				submit_read(ns_ctx, worker->lcore, task, addr, iotasks[cmd_id].size);		
-			}	else{
-				submit_write(ns_ctx, worker->lcore, task, addr, iotasks[cmd_id].size);		
-			}
+			if (iotasks[cmd_id].type == 0)
+				submit_read(ns_ctx, worker->lcore, task, 
+						addr, iotasks[cmd_id].size, r.cmd_id, r.ptr);		
+			else
+				submit_write(ns_ctx, worker->lcore, task, 
+						addr, iotasks[cmd_id].size, r.cmd_id, r.ptr);		
+			
 		}
 		// Here we could not use while to block the process.
 		if (ns_ctx->current_queue_depth > 0)
@@ -144,7 +154,7 @@ static int work_fn(void *arg){
 
 // Check whether two cmds have both
 // the addr overlap and the type conflict.
-static unsigned check_cover(uint64_t cmd_a, uint64_t cmd_b){
+static inline unsigned check_cover(uint64_t cmd_a, uint64_t cmd_b){
 	struct iotask *c1 = &iotasks[cmd_a];
 	struct iotask *c2 = &iotasks[cmd_b];
 	
@@ -172,6 +182,16 @@ static unsigned check_issue_conflict(uint64_t cmd_id){
 			if (check_cover(issue_buf[i].issue_queue[j].cmd_id, cmd_id))
 				conflict_flag = 1;	
 		}
+		
+		unsigned pos = cmd_buf[i].head;
+		for (unsigned j = 0; j < cmd_buf[i].cnt; j++){
+			if (check_cover(cmd_buf[i].queue[pos], cmd_id)){
+				conflict_flag = 1;
+				break;
+			}
+			pos += 1;
+			if (pos == CMD_BUF_SIZE) pos = 0;
+		}
 	
 		nvme_mutex_unlock(&lock[i]);
 
@@ -183,7 +203,7 @@ static unsigned check_issue_conflict(uint64_t cmd_id){
 // Check whether this cmd(cmd_id)
 // conflicts with either the ISSUE_BUF 
 // or the PENDING_QUEUE. 
-static unsigned check_conflict(uint64_t cmd_id){
+static inline unsigned check_conflict(uint64_t cmd_id){
 	
 	// Check pending queue first.
 	unsigned pos = master_pending.head;
@@ -210,15 +230,15 @@ static int select_worker(void){
 	// to issue.
 	// Loop until we find one...
 	while (true){
-		nvme_mutex_lock(&lock[g_robin]);
+		//nvme_mutex_lock(&lock[g_robin]);
 		
 		// To ensure that in any time there 
 		// is only at most 10 cmds in worker's workload.
-		if ((issue_buf[g_robin].ctx->current_queue_depth + cmd_buf[g_robin].cnt) != ISSUE_BUF_SIZE)
+		if ((issue_buf[g_robin].ctx->current_queue_depth + cmd_buf[g_robin].cnt) < ISSUE_BUF_SIZE - 2)
 			flag = 1;
-		nvme_mutex_unlock(&lock[g_robin]);
+		//nvme_mutex_unlock(&lock[g_robin]);
 		
-		// If above's worker is noe able to receive...
+		// If above's worker is not able to receive...
 		if (flag) return g_robin;
 		g_robin += 1;
 		if (g_robin > g_num_workers) g_robin = 1;
@@ -233,6 +253,7 @@ static int select_worker(void){
 // 		-- Else, return 0;
 // -- If none, call the select_worker() to return the worker id.
 static int scheduler(uint64_t cmd_id){
+	
 	if (check_conflict(cmd_id)){
 
 		if (master_pending.cnt == PENDING_QUEUE_SIZE) return -1;
@@ -245,6 +266,7 @@ static int scheduler(uint64_t cmd_id){
 			master_pending.tail = 0;
 		return 0;
 	}
+	
 	return select_worker();
 }
 
@@ -259,11 +281,12 @@ static void master_issue(uint64_t cmd_id, int target){
 	nvme_mutex_lock(&lock[target]);
 	
 	// Write the slave worker's cmd_buf. 
-	cmd_buf[target].queue[cmd_buf[target].head] = cmd_id;
-	cmd_buf[target].head += 1;
-	if (cmd_buf[target].head == CMD_BUF_SIZE)
-		cmd_buf[target].head = 0;
+	cmd_buf[target].queue[cmd_buf[target].tail] = cmd_id;
+	cmd_buf[target].tail += 1;
+	if (cmd_buf[target].tail == CMD_BUF_SIZE)
+		cmd_buf[target].tail = 0;
 	cmd_buf[target].cnt += 1;
+	//printf("Master write cmd %lu at %d\n", cmd_id, target); 
 
 	nvme_mutex_unlock(&lock[target]);
 }

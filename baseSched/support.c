@@ -220,8 +220,7 @@ int initSPDK(void){
 	//(aka. one master thread plus (n-1) I/O queue) for our algorithm
 
 	g_io_size_bytes = 512;
-	optind = 1;
-	g_core_mask = "0x3";
+	g_core_mask = "0xffff";
 
 	ealargs[1] = sprintf_alloc("-c %s", g_core_mask);
 	if (ealargs[1] == NULL) {
@@ -334,41 +333,34 @@ int initTrace(void){
 	return 0;
 }
 
-void task_complete(struct perf_task *task){
+void task_complete(struct issue_task *task){
 	struct ns_worker_ctx	*ns_ctx;
-
+	task->io_completed = 1;	
 	ns_ctx = task->ns_ctx;
 	ns_ctx->current_queue_depth--;
 	ns_ctx->io_completed++;
+	
 }
 
 void io_complete(void *ctx, const struct nvme_completion *completion){
-	task_complete((struct perf_task *)ctx);
+	task_complete((struct issue_task *)ctx);
 }
 
-int submit_read(struct ns_worker_ctx *ns_ctx, int target, struct perf_task *task, uint64_t lba, uint64_t num_blocks){
+int submit_read(struct ns_worker_ctx *ns_ctx, int target, struct perf_task *task, uint64_t lba, uint64_t num_blocks, uint64_t arg1, void *arg2){
 	struct ns_entry *entry = ns_ctx->entry;
 	int rc;
+	//printf("Check it %lu %lu\n", arg1, ((struct issue_task *)arg2)->cmd_id);
+	//exit(1);
 	rc = nvme_ns_cmd_read(entry->u.nvme.ns, task->buf, lba,
-		num_blocks, io_complete, task);
-	/*
-	nvme_mutex_lock(&lock[target]);
-	issue_buf[target].ctx->current_queue_depth++;
-	nvme_mutex_unlock(&lock[target]);
-	*/
+		num_blocks, io_complete, arg2);
 	return rc;
 }
 
-int submit_write(struct ns_worker_ctx *ns_ctx, int target, struct perf_task *task, uint64_t lba, uint64_t num_blocks){
+int submit_write(struct ns_worker_ctx *ns_ctx, int target, struct perf_task *task, uint64_t lba, uint64_t num_blocks, uint64_t arg1, void *arg2){
 	struct ns_entry	*entry = ns_ctx->entry;
 	int rc;
 	rc = nvme_ns_cmd_write(entry->u.nvme.ns, task->buf, lba,
-		num_blocks, io_complete, task);
-	/*
-	nvme_mutex_lock(&lock[target]);
-	issue_buf[target].ctx->current_queue_depth++;
-	nvme_mutex_unlock(&lock[target]);
-	*/
+		num_blocks, io_complete, arg2);
 	return rc;
 }
 

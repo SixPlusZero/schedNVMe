@@ -29,8 +29,8 @@ typedef unsigned long int   uint64_t;
 #define MAX_IO_BLOCKS 100
 #define IO_TIME 100000
 #define MAX_NUM_WORKER 16
-#define CMD_BUF_SIZE 100
-#define ISSUE_BUF_SIZE 10
+#define CMD_BUF_SIZE 150
+#define ISSUE_BUF_SIZE 100
 #define PENDING_QUEUE_SIZE 1000
 
 
@@ -71,7 +71,9 @@ struct ns_worker_ctx {
 
 struct perf_task {
 	struct ns_worker_ctx	*ns_ctx;
-	void			*buf;
+	void	*buf;
+	unsigned arg1;
+	unsigned arg2;
 };
 
 struct worker_thread {
@@ -83,6 +85,7 @@ struct worker_thread {
 struct issue_task{
 	uint64_t cmd_id;
 	uint64_t io_completed; // Whether it's completed.
+	struct ns_worker_ctx *ns_ctx;
 };
 
 struct issue_struct{
@@ -113,6 +116,11 @@ struct cmd_struct{
 	unsigned cnt;
 	unsigned head;
 	unsigned tail;
+};
+
+struct submit_struct{
+	uint64_t cmd_id;
+	void *ptr;
 };
 
 /* Variable Declaration */
@@ -159,7 +167,7 @@ extern int associate_workers_with_ns(void);
 extern int initSPDK(void);
 extern int initTrace(void);
 extern int replay_split(struct iotask *dst, char* str);
-extern void task_complete(struct perf_task *task);
+extern void task_complete(struct issue_task *task);
 extern void io_complete(void *ctx, const struct nvme_completion *completion);
-extern int submit_read(struct ns_worker_ctx *ns_ctx, int target, struct perf_task *task, uint64_t lba, uint64_t num_blocks);
-extern int submit_write(struct ns_worker_ctx *ns_ctx, int target, struct perf_task *task, uint64_t lba, uint64_t num_blocks);
+extern int submit_read(struct ns_worker_ctx *ns_ctx, int target, struct perf_task *task, uint64_t lba, uint64_t num_blocks, uint64_t arg1, void *arg2);
+extern int submit_write(struct ns_worker_ctx *ns_ctx, int target, struct perf_task *task, uint64_t lba, uint64_t num_blocks, uint64_t arg1, void *arg2);
