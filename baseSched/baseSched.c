@@ -131,10 +131,10 @@ static int work_fn(void *arg){
 	// Report to master that slave's work has finished.
 	nvme_mutex_lock(&lock_master);
 	io_count += 1;
-	nvme_mutex_unlock(&lock_master);
 	printf("[Debug] [Important] %lu\n", ns_ctx->io_completed);
 	printf("[Debug] %u finished, with global %u/%u\n",
 			worker->lcore, io_count, g_num_workers);
+	nvme_mutex_unlock(&lock_master);
 
 	rte_free(task->buf);
 	rte_free(task);

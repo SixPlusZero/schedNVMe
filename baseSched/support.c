@@ -221,7 +221,7 @@ int initSPDK(void){
 
 	g_io_size_bytes = 512;
 	optind = 1;
-	g_core_mask = "0xffff";
+	g_core_mask = "0x3";
 
 	ealargs[1] = sprintf_alloc("-c %s", g_core_mask);
 	if (ealargs[1] == NULL) {
@@ -308,7 +308,7 @@ int initTrace(void){
 	struct stat replay_stat;
 	int replay_fd;
 
-	replay_fd = open("WebSearch1.spc", O_RDWR);
+	replay_fd = open("WebSearch2.spc", O_RDWR);
 	if (replay_fd < 0){
 		printf("trace file open failed\n");
 		exit(1);
