@@ -272,31 +272,36 @@ int replay_split(struct iotask *dst, char* str){
 
 	char opcode;
 	double timestamp;
+	int validFlag = 0;
 
 	result = strtok(str, "\n");
 	while(result != NULL){
+		validFlag = 0;
 		sscanf(result, "%u,%u,%u,%c,%lf", 
 				&(dst[n].asu), &(dst[n].lba), &(dst[n].size), 
 				&opcode, &timestamp);
 		dst[n].size /= 512;
+		if (dst[n].size == 0) validFlag = 1;
+		if (!validFlag){
+			
+			// get max asu, lba and size
+			f_maxasu = dst[n].asu > f_maxasu ? dst[n].asu : f_maxasu;
+			f_maxlba = dst[n].lba + dst[n].size > f_maxlba ? dst[n].lba + dst[n].size : f_maxlba;
+			f_maxsize = dst[n].size > f_maxsize ? dst[n].size : f_maxsize;
+			
+			// update total size
+			f_totalblocks += dst[n].size;
 		
-		// get max asu, lba and size
-		f_maxasu = dst[n].asu > f_maxasu ? dst[n].asu : f_maxasu;
-		f_maxlba = dst[n].lba + dst[n].size > f_maxlba ? dst[n].lba + dst[n].size : f_maxlba;
-		f_maxsize = dst[n].size > f_maxsize ? dst[n].size : f_maxsize;
-		// update total size
-		f_totalblocks += dst[n].size;
-		
-		if (opcode == 'r' || opcode == 'R'){
-			iotask_read_count++;
-			dst[n].type = 0;
+			if (opcode == 'r' || opcode == 'R'){
+				iotask_read_count++;
+				dst[n].type = 0;
+			} else{
+				iotask_write_count++;
+				dst[n].type = 1;
+			}
+			n++;
 		}
-		else{
-			iotask_write_count++;
-			dst[n].type = 1;
-		}
-	n++;
-	result = strtok(NULL, "\n");
+		result = strtok(NULL, "\n");
 	}
 	return n;
 }
@@ -307,7 +312,7 @@ int initTrace(void){
 	struct stat replay_stat;
 	int replay_fd;
 
-	replay_fd = open("WebSearch2.spc", O_RDWR);
+	replay_fd = open("Financial2.spc", O_RDWR);
 	if (replay_fd < 0){
 		printf("trace file open failed\n");
 		exit(1);

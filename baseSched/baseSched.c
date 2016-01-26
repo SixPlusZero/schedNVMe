@@ -55,7 +55,6 @@ static struct submit_struct fetch_cmd(struct ns_worker_ctx *ns_ctx, unsigned tar
 	cmd_buf[target].head += 1;
 	if (cmd_buf[target].head == CMD_BUF_SIZE) cmd_buf[target].head = 0;
 	cmd_buf[target].cnt -= 1;
-	//printf("%lu\n", cmd_id);	
 	// worker->issue_buf
 	for (unsigned i = 0; i < ISSUE_BUF_SIZE; i++){
 		if (issue_buf[target].issue_queue[i].io_completed == 1){
@@ -233,7 +232,7 @@ static int select_worker(void){
 		//nvme_mutex_lock(&lock[g_robin]);
 		
 		// To ensure that in any time there 
-		// is only at most 10 cmds in worker's workload.
+		// is only at most ISSUE_BUF cmds in worker's workload.
 		if ((issue_buf[g_robin].ctx->current_queue_depth + cmd_buf[g_robin].cnt) < ISSUE_BUF_SIZE - 2)
 			flag = 1;
 		//nvme_mutex_unlock(&lock[g_robin]);
@@ -255,7 +254,7 @@ static int select_worker(void){
 static int scheduler(uint64_t cmd_id){
 	
 	if (check_conflict(cmd_id)){
-
+		//printf("[ATTENTION] Confliction deteced at cmd No.%lu\n", cmd_id);
 		if (master_pending.cnt == PENDING_QUEUE_SIZE) return -1;
 
 		master_pending.pending_queue[master_pending.cnt].cmd_id = cmd_id;
@@ -286,7 +285,6 @@ static void master_issue(uint64_t cmd_id, int target){
 	if (cmd_buf[target].tail == CMD_BUF_SIZE)
 		cmd_buf[target].tail = 0;
 	cmd_buf[target].cnt += 1;
-	//printf("Master write cmd %lu at %d\n", cmd_id, target); 
 
 	nvme_mutex_unlock(&lock[target]);
 }
@@ -294,7 +292,9 @@ static void master_issue(uint64_t cmd_id, int target){
 // Clear the pending queue.
 static void clear_pending(void){
 	if (master_pending.cnt == 0) return;
+	
 	while (true){
+
 		uint64_t cmd_id = master_pending.pending_queue[master_pending.head].cmd_id;
 		
 		// If head cmd still cannot issue, just return
@@ -321,14 +321,14 @@ static void clear_pending(void){
 static void master_fn(void){
 	io_count = 0;
 	io_issue_flag = 0;
-
+	
 	//Wait until all slave workers finish their init.
 	while (init_count != g_num_workers);
 	
 	//Begin timing.
 	uint64_t tsc_start = rte_get_timer_cycles();
 	printf("All slaves are ready now\n");
-	sleep(3);
+	sleep(1);
 	
 	uint64_t pos = 0;
 	while (pos < f_len){
@@ -343,6 +343,9 @@ static void master_fn(void){
 				printf("Master has (allocated && (issued || pending)) %lu commands\n", pos);
 		}
 	}
+
+	// Clear all the pending instruction
+	while (master_pending.cnt != 0) clear_pending();
 	
 	//Tag that master has allocated all the commands.
 	io_issue_flag = 1;
@@ -395,7 +398,6 @@ int main(void){
 		worker = worker->next;
 	}
 
-	//rc = work_fn(g_workers);
 	free(iotasks);
 	unregister_controllers();
 
