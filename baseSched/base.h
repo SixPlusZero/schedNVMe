@@ -102,12 +102,13 @@ struct iotask {
 
 struct pending_task{
 	uint64_t cmd_id;
+	struct pending_task *prev;
+	struct pending_task *next;
 };
 
 struct pending_tasks{
-	struct pending_task pending_queue[PENDING_QUEUE_SIZE];
-	unsigned head;
-	unsigned tail;
+	struct pending_task *head;
+	struct pending_task *tail;
 	unsigned cnt;
 };
 

@@ -205,12 +205,11 @@ static unsigned check_issue_conflict(uint64_t cmd_id){
 static inline unsigned check_conflict(uint64_t cmd_id){
 	
 	// Check pending queue first.
-	unsigned pos = master_pending.head;
-	for (unsigned i = 0; i < master_pending.cnt; i++){
-		if (check_cover(master_pending.pending_queue[pos].cmd_id, cmd_id))
+	struct pending_task *target = master_pending.head;
+	while (target){
+		if (check_cover(target->cmd_id, cmd_id))
 			return 1;
-		pos += 1;
-		if (pos == PENDING_QUEUE_SIZE) pos = 0;		
+		target = target->next;	
 	}
 
 	// Check issue_buf.
@@ -254,15 +253,24 @@ static int select_worker(void){
 static int scheduler(uint64_t cmd_id){
 	
 	if (check_conflict(cmd_id)){
-		//printf("[ATTENTION] Confliction deteced at cmd No.%lu\n", cmd_id);
 		if (master_pending.cnt == PENDING_QUEUE_SIZE) return -1;
 
-		master_pending.pending_queue[master_pending.cnt].cmd_id = cmd_id;
+		if (master_pending.tail == NULL){
+		 	master_pending.tail = malloc(sizeof(struct pending_task));
+			master_pending.head = master_pending.tail;
+			master_pending.tail->prev = NULL;
+			master_pending.tail->next = NULL;
+			master_pending.cnt = 1;
+		} else{
+			master_pending.cnt += 1;
+			master_pending.tail->next = malloc(sizeof(struct pending_task));
+			master_pending.tail->next->next = NULL;
+			master_pending.tail->next->prev = master_pending.tail;
+			master_pending.tail = master_pending.tail->next;
+		}
+		master_pending.tail->cmd_id = cmd_id;
+		
 		pending_count += 1;
-		master_pending.cnt += 1;
-		master_pending.tail += 1;
-		if (master_pending.tail == PENDING_QUEUE_SIZE) 
-			master_pending.tail = 0;
 		return 0;
 	}
 	
@@ -295,7 +303,7 @@ static void clear_pending(void){
 	
 	while (true){
 
-		uint64_t cmd_id = master_pending.pending_queue[master_pending.head].cmd_id;
+		uint64_t cmd_id = master_pending.head->cmd_id;
 		
 		// If head cmd still cannot issue, just return
 		if (check_issue_conflict(cmd_id)) return;	
@@ -304,11 +312,17 @@ static void clear_pending(void){
 		// the worker would receive all the cmds from the buf.
 		int rc = select_worker();
 		master_issue(cmd_id, rc);		
+
+		struct pending_task *target = master_pending.head;
+
+		master_pending.cnt -= 1;	
 		
-		master_pending.cnt -= 1;
-		master_pending.head += 1;
-		if (master_pending.head == PENDING_QUEUE_SIZE)
-			master_pending.head = 0;
+		if (target->prev) target->prev->next = target->next;
+		if (target->next) target->next->prev = target->prev;
+		if (target == master_pending.head) master_pending.head = target->next;
+		if (target == master_pending.tail) master_pending.tail = target->prev;
+		free(target);
+
 
 		if (master_pending.cnt == 0)
 			return;
@@ -322,6 +336,12 @@ static void master_fn(void){
 	io_count = 0;
 	io_issue_flag = 0;
 	
+	// Init pending task
+	master_pending.head = NULL;
+	master_pending.tail = NULL;
+	master_pending.cnt = 0;
+
+
 	//Wait until all slave workers finish their init.
 	while (init_count != g_num_workers);
 	
