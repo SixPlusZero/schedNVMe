@@ -334,12 +334,13 @@ int initTrace(void){
 
 void task_complete(struct issue_task *task){
 	struct ns_worker_ctx	*ns_ctx;
-	printf("Check one task completed at qid %d\n", task->qid);	
 	task->io_completed = 1;
 	g_master->queue_depth[task->qid] -= 1;
 
 	ns_ctx = g_master->ns_ctx;
 	ns_ctx->io_completed++;
+	//printf("Completed %lu\n", ns_ctx->io_completed);
+	//printf("Remain %lu in queue %u\n", g_master->queue_depth[task->qid], task->qid); 
 	
 }
 
@@ -350,11 +351,8 @@ void io_complete(void *ctx, const struct nvme_completion *completion){
 int submit_read(struct perf_task *task, uint64_t lba, uint64_t num_blocks, int arg1, void *arg2){
 	struct ns_entry *entry = g_master->ns_ctx->entry;
 	int rc;
-	printf("Entry is %s\n", entry->name);
-	printf("Submitting read cmd to queue id %d\n", arg1);
 	rc = nvme_ns_cmd_read_by_id(entry->u.nvme.ns, task->buf, lba,
 		num_blocks, io_complete, arg2, arg1);
-	printf("Submitted");
 	return rc;
 }
 

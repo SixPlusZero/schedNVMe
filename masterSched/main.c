@@ -22,6 +22,9 @@ uint64_t f_maxsize = 0;
 uint64_t f_totalblocks = 0;
 uint64_t iotask_read_count = 0;
 uint64_t iotask_write_count = 0;
+int DFLAG;
+
+
 
 struct perf_task *tasks[MAX_NUM_WORKER];
 struct iotask *iotasks;
@@ -84,11 +87,17 @@ static void clear_issue(int type){
 
 	if (type == -1){
 		for (int i = 0; i < QUEUE_NUM; i++)
-			if (g_master->queue_depth[type] > 0)
+			if (g_master->queue_depth[i] > 0){
+				//printf("Before %lu in queue %d\n", g_master->queue_depth[i], i); 
 				nvme_ctrlr_process_io_completions_by_id(ctrlr, 0, i);
+				//printf("After %lu in queue %d\n", g_master->queue_depth[i], i);
+			}
 	} else{
-		if (g_master->queue_depth[type] > 0)
+		if (g_master->queue_depth[type] > 0){
+			//printf("Before %lu in queue %d\n", g_master->queue_depth[type], type);
 			nvme_ctrlr_process_io_completions_by_id(ctrlr, 0, type);
+			//printf("After %lu in queue %d\n", g_master->queue_depth[type], type);
+		}
 	}
 }
 
@@ -110,6 +119,7 @@ static int select_worker(void){
 		
 		// If above's worker is not able to receive...
 		if (flag) return g_robin;
+		clear_issue(g_robin);
 		g_robin = (g_robin + 1) % QUEUE_NUM;
 	}
 }
@@ -180,9 +190,8 @@ static void master_issue(uint64_t cmd_id, int target){
 // Clear the pending queue.
 static void clear_pending(void){
 	if (master_pending.cnt == 0) return;
-	
+	int cnt = 0;	
 	struct pending_task *target = master_pending.head;
-
 	while (target){
 		int cflag = 0;
 		uint64_t cmd_id = master_pending.head->cmd_id;
@@ -203,7 +212,7 @@ static void clear_pending(void){
 			target = target -> next;
 			continue;
 		}
-		
+		cnt += 1;
 		// Here we issue first so that
 		// the worker would receive all the cmds from the buf.
 		int rc = select_worker();
@@ -217,8 +226,7 @@ static void clear_pending(void){
 		if (target == master_pending.tail) master_pending.tail = target->prev;
 		free(target);
 		target = back_target;
-		//if (master_pending.cnt == 0) break;
-	}	
+	}
 }
 
 // Master's main process.
@@ -233,7 +241,6 @@ static void master_fn(void){
 	master_pending.tail = NULL;
 	master_pending.cnt = 0;
 	
-	f_len = 1;
 	// Init task buffer resource
 	for (int i = 0; i < QUEUE_NUM; i++){
 		tasks[i] = rte_malloc(NULL, sizeof(struct perf_task), 0x200);
@@ -243,15 +250,16 @@ static void master_fn(void){
 			issue_buf[i].issue_queue[j].qid = i;
 		}
 	}
+
 	//Begin timing.
 	uint64_t tsc_start = rte_get_timer_cycles();
 	
 	uint64_t pos = 0;
 	while (pos < f_len){
+		//printf("%lu\n", pos);
 		clear_issue(-1);		
 		clear_pending();
 		int target = scheduler(pos);
-		printf("%d\n",target);
 		if (target >= 0)
 		  master_issue(pos, target);
 	
@@ -262,9 +270,12 @@ static void master_fn(void){
 		}
 	
 	}
-
+	printf("Master has issued all of the I/O commands\n");
+	
 	// Clear all the pending instruction
+	DFLAG = 1;
 	while (master_pending.cnt != 0) {
+		clear_issue(-1);
 		clear_pending();
 	}
 	
@@ -273,8 +284,9 @@ static void master_fn(void){
 	while (flag){
 		flag = 0;
 		clear_issue(-1);
-		for (int i = 0; i < QUEUE_NUM; i++)
+		for (int i = 0; i < QUEUE_NUM; i++){
 			if (g_master->queue_depth[i]) flag = 1;
+		}
 	}
 
 	//Stop timing.
@@ -313,7 +325,7 @@ int main(void){
 		exit(1);
 	}
 
-
+	DFLAG = 0;
 	// Init task buffer resource
 	master_fn();
 	free(iotasks);
