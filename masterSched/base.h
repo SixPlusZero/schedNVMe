@@ -27,9 +27,9 @@
 
 typedef unsigned long int   uint64_t;
 #define MAX_NUM_WORKER 16
-#define ISSUE_BUF_SIZE 200
+#define ISSUE_BUF_SIZE 50
 #define PENDING_QUEUE_SIZE 1000
-#define QUEUE_NUM 1
+#define QUEUE_NUM 8
 
 
 struct ctrlr_entry {

@@ -140,7 +140,8 @@ static int work_fn(void *arg){
 	// Report to master that slave's work has finished.
 	nvme_mutex_lock(&lock_master);
 	io_count += 1;
-	printf("[Debug] [Important] %lu\n", ns_ctx->io_completed);
+	printf("[Write Count] %lu\n", ns_ctx->write_cnt);
+	printf("[IO Completed] %lu\n", ns_ctx->io_completed);
 	printf("[Debug] %u finished, with global %u/%u\n",
 			worker->lcore, io_count, g_num_workers);
 	nvme_mutex_unlock(&lock_master);
@@ -203,7 +204,7 @@ static unsigned check_issue_conflict(uint64_t cmd_id){
 // conflicts with either the ISSUE_BUF 
 // or the PENDING_QUEUE. 
 static inline unsigned check_conflict(uint64_t cmd_id){
-	
+	//return 0;	
 	// Check pending queue first.
 	struct pending_task *target = master_pending.head;
 	while (target){
@@ -301,31 +302,44 @@ static void master_issue(uint64_t cmd_id, int target){
 static void clear_pending(void){
 	if (master_pending.cnt == 0) return;
 	
-	while (true){
+	struct pending_task *target = master_pending.head;
 
+	while (target){
+		int cflag = 0;
 		uint64_t cmd_id = master_pending.head->cmd_id;
 		
 		// If head cmd still cannot issue, just return
-		if (check_issue_conflict(cmd_id)) return;	
+		if (check_issue_conflict(cmd_id)) cflag = 1;	
+		
+		if (!cflag){
+			struct pending_task *cp_ptr = master_pending.head;
+			while (cp_ptr != target){
+				if (check_cover(cp_ptr->cmd_id, cmd_id)){
+					cflag = 1;
+					break;
+				}
+				cp_ptr = cp_ptr->next;
+			}
+		}
+		if (cflag){
+			target = target -> next;
+			continue;
+		}
 		
 		// Here we issue first so that
 		// the worker would receive all the cmds from the buf.
 		int rc = select_worker();
 		master_issue(cmd_id, rc);		
 
-		struct pending_task *target = master_pending.head;
-
 		master_pending.cnt -= 1;	
-		
+		struct pending_task *back_target = target->next;
 		if (target->prev) target->prev->next = target->next;
 		if (target->next) target->next->prev = target->prev;
 		if (target == master_pending.head) master_pending.head = target->next;
 		if (target == master_pending.tail) master_pending.tail = target->prev;
 		free(target);
-
-
-		if (master_pending.cnt == 0)
-			return;
+		target = back_target;
+		//if (master_pending.cnt == 0) break;
 	}	
 }
 

@@ -30,7 +30,7 @@ typedef unsigned long int   uint64_t;
 #define IO_TIME 100000
 #define MAX_NUM_WORKER 16
 #define CMD_BUF_SIZE 150
-#define ISSUE_BUF_SIZE 100
+#define ISSUE_BUF_SIZE 50
 #define PENDING_QUEUE_SIZE 1000
 
 
@@ -64,8 +64,9 @@ struct ns_entry {
 
 struct ns_worker_ctx {
 	struct ns_entry		*entry;
-	uint64_t		io_completed;
-	uint64_t		current_queue_depth;
+	uint64_t io_completed;
+	uint64_t write_cnt;
+	uint64_t current_queue_depth;
 	struct ns_worker_ctx *next;
 };
 

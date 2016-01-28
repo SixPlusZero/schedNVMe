@@ -133,7 +133,7 @@ static int select_worker(void){
 // -- If none, call the select_worker() to return the worker id.
 static int scheduler(uint64_t cmd_id){
 	
-	if (check_conflict(cmd_id)){
+	if (check_conflict(cmd_id) == 1){
 		if (master_pending.cnt == PENDING_QUEUE_SIZE) return -2;
 
 		if (master_pending.tail == NULL){

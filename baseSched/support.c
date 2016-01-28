@@ -220,7 +220,7 @@ int initSPDK(void){
 	//(aka. one master thread plus (n-1) I/O queue) for our algorithm
 
 	g_io_size_bytes = 512;
-	g_core_mask = "0xffff";
+	g_core_mask = "0x1ff";
 
 	ealargs[1] = sprintf_alloc("-c %s", g_core_mask);
 	if (ealargs[1] == NULL) {
@@ -340,8 +340,9 @@ int initTrace(void){
 
 void task_complete(struct issue_task *task){
 	struct ns_worker_ctx	*ns_ctx;
-	task->io_completed = 1;	
+	task->io_completed = 1;
 	ns_ctx = task->ns_ctx;
+	if (iotasks[task->cmd_id].type == 1) ns_ctx->write_cnt += 1;	
 	ns_ctx->current_queue_depth--;
 	ns_ctx->io_completed++;
 	
