@@ -26,10 +26,10 @@
 #include "../lib/nvme/nvme_internal.h"
 
 typedef unsigned long int   uint64_t;
-#define MAX_NUM_WORKER 16
+#define MAX_NUM_WORKER 32
 #define ISSUE_BUF_SIZE 50
 #define PENDING_QUEUE_SIZE 1000
-#define QUEUE_NUM 8
+#define QUEUE_NUM 30
 
 
 struct ctrlr_entry {
@@ -76,7 +76,7 @@ struct perf_task {
 struct worker_thread {
 	struct ns_worker_ctx 	*ns_ctx;
 	struct worker_thread	*next;
-	uint64_t queue_depth[32];
+	uint64_t queue_depth[MAX_NUM_WORKER];
 	unsigned lcore;
 };
 

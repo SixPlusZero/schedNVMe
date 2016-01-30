@@ -274,9 +274,14 @@ int replay_split(struct iotask *dst, char* str){
 		sscanf(result, "%u,%u,%u,%c,%lf", 
 				&(dst[n].asu), &(dst[n].lba), &(dst[n].size), 
 				&opcode, &timestamp);
-		dst[n].size /= 512;
 		if (dst[n].size == 0) validFlag = 1;
-		if (!validFlag){
+		dst[n].size = (dst[n].size / 512);
+		uint64_t temp_addr = (dst[n].lba >> 3) << 3;
+		dst[n].size = (dst[n].lba - temp_addr) + dst[n].size;
+		uint64_t temp_blk = (dst[n].size % 8)?(8 - dst[n].size % 8):0;
+		dst[n].size += temp_blk;
+		dst[n].lba = temp_addr;
+			if (!validFlag){
 			
 			// get max asu, lba and size
 			f_maxasu = dst[n].asu > f_maxasu ? dst[n].asu : f_maxasu;

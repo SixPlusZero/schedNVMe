@@ -22,7 +22,6 @@ uint64_t f_maxsize = 0;
 uint64_t f_totalblocks = 0;
 uint64_t iotask_read_count = 0;
 uint64_t iotask_write_count = 0;
-int DFLAG;
 
 
 
@@ -71,6 +70,8 @@ static unsigned check_issue_conflict(uint64_t cmd_id){
 // conflicts with either the ISSUE_BUF 
 // or the PENDING_QUEUE. 
 static unsigned check_conflict(uint64_t cmd_id){
+	if (check_issue_conflict(cmd_id)) return 1;
+
 	// Check pending queue first.
 	struct pending_task *target = master_pending.head;
 	while (target){
@@ -78,8 +79,9 @@ static unsigned check_conflict(uint64_t cmd_id){
 			return 1;
 		target = target->next;	
 	}
+	return 0;
 	// Check issue_buf.
-	return check_issue_conflict(cmd_id);
+	//return check_issue_conflict(cmd_id);
 }
 
 static void clear_issue(int type){
@@ -114,6 +116,8 @@ static int select_worker(void){
 	while (true){
 		// To ensure that in any time there 
 		// is only at most ISSUE_BUF cmds in worker's workload.
+		//clear_issue(g_robin);
+
 		if ((g_master->queue_depth[g_robin]) < ISSUE_BUF_SIZE)
 			flag = 1;
 		
@@ -273,13 +277,12 @@ static void master_fn(void){
 	printf("Master has issued all of the I/O commands\n");
 	
 	// Clear all the pending instruction
-	DFLAG = 1;
 	while (master_pending.cnt != 0) {
 		clear_issue(-1);
 		clear_pending();
 	}
 	
-	// [TODO] Check out all the issued commands
+	// Check out all the issued commands
 	int flag = 1;
 	while (flag){
 		flag = 0;
@@ -300,7 +303,7 @@ static void master_fn(void){
 	//Output the result infomation.
 	printf("Time: %lf seconds\n", sec);
 	printf("Throughput: %lf MB/S\n", (double)f_totalblocks/2048/sec);
-
+	printf("IOPS: %lf /S\n", (double)f_len/sec);
 	for (int i = 0; i < QUEUE_NUM; i++){
 		rte_free(tasks[i]->buf);
 		rte_free(tasks[i]);
@@ -324,8 +327,7 @@ int main(void){
 		printf("Init trace file error \n");
 		exit(1);
 	}
-
-	DFLAG = 0;
+	
 	// Init task buffer resource
 	master_fn();
 	free(iotasks);
